@@ -1,0 +1,11 @@
+{
+  "name": "個人Wiki v2.0.8 Mobile",
+  "short_name": "個人Wiki",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "lang": "ja",
+  "description": "Dropboxと同期する個人用Wikiのスマートフォン/PWA版"
+}

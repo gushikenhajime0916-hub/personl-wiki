@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="個人Wiki">
+<title>個人Wiki v2.0.8 Mobile</title>
+<link rel="manifest" href="manifest.webmanifest?v=mobile208">
+<link rel="stylesheet" href="style.css?v=mobile208">
+<script>
+// v2.0初期版の古いService Workerをローカル起動時に解除する。
+if ('serviceWorker' in navigator && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.getRegistrations().then(rs => Promise.all(rs.map(r => r.unregister())));
+  if ('caches' in window) caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+}
+</script>
+</head>
+<body>
+<header>
+  <button id="menu" aria-label="メニュー">☰</button>
+  <div class="brand">
+    <strong>個人Wiki v2.0.8 Mobile</strong>
+    <small><span id="current"></span> <span id="cloudStatus" class="cloud-status"></span></small>
+  </div>
+  <button id="editBtn" title="編集" disabled>✎</button>
+  <button id="pageSearchBtn" title="記事内検索">⌕</button>
+  <button id="searchBtn" title="全文検索">🔎</button>
+</header>
+<aside id="drawer" class="drawer">
+  <button id="homeBtn">ホーム</button>
+  <button id="reloadBtn">Dropbox同期</button>
+  <button id="newArticleBtn">新規記事</button>
+  <button id="newTemplateBtn">新規テンプレート</button>
+  <details class="sidebar-group settings-group">
+    <summary>Dropbox設定</summary>
+    <div class="settings-box">
+      <label>Dropbox App Key<input id="dropboxAppKey" autocomplete="off" placeholder="App Keyを貼り付け"></label>
+      <label>この端末<select id="deviceRole"><option value="secondary">スマホ／Chromebook</option><option value="pc">主PC</option></select></label>
+      <div class="small-note">Dropboxに登録するRedirect URI：</div>
+      <code id="redirectUri" class="redirect-uri"></code>
+      <button id="dropboxSettingsSave">設定を保存</button>
+      <button id="dropboxConnectBtn">Dropboxに接続</button>
+      <button id="dropboxInitBtn">初期フォルダを作成</button>
+      <button id="dropboxDisconnectBtn">この端末の接続情報を削除</button>
+    </div>
+  </details>
+  <hr><div id="articleList"></div>
+</aside>
+<div id="backdrop" class="backdrop"></div>
+<main>
+  <section id="search" class="search"><input id="q" placeholder="全文検索"><div id="results"></div></section>
+  <section id="pageSearch" class="page-search"><div class="page-search-row"><input id="pageQ" placeholder="この記事内を検索"><button id="pagePrev">前へ</button><button id="pageNext">次へ</button><button id="pageSearchClose">×</button></div><small id="pageSearchStatus"></small></section>
+  <section id="editor" class="editor">
+    <div class="editor-head">
+      <strong id="editorTitle"></strong>
+      <div>
+        <button id="editorSave">保存</button>
+        <button id="editorCancel">キャンセル</button>
+      </div>
+    </div>
+    <div id="newArticleMeta" class="new-article-meta">
+      <label>記事名
+        <input id="newArticleTitle" placeholder="例：日本語文法/文の成分/主語">
+      </label>
+      <label>記事種別
+        <select id="newArticleType"></select>
+      </label>
+      <div id="newArticleTypeNewBox" class="new-type-box">
+        <label>新しい記事種別
+          <input id="newArticleTypeNew" placeholder="例：研究資料">
+        </label>
+      </div>
+    </div>
+    <textarea id="editorText" spellcheck="false"></textarea>
+    <div id="editorMessage" class="editor-message"></div>
+  </section>
+  <article id="view" class="paper"></article>
+</main>
+<script src="storage.js?v=mobile208"></script>
+<script src="app.js?v=mobile208"></script>
+<script>
+// PWAのService WorkerはHTTPS公開時だけ登録する。ローカルPC版では登録しない。
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('./sw.js?v=mobile208').catch(console.warn);
+}
+</script>
+</body></html>
