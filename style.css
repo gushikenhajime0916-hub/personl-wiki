@@ -85,3 +85,39 @@ button,input,select,textarea{touch-action:manipulation}
   .figure-large,.figure-center{width:100%;max-width:100%!important}
   .ref-popup{position:fixed!important;left:8px!important;right:8px!important;top:auto!important;bottom:12px;width:auto;max-height:55vh;overflow:auto}
 }
+
+
+/* v2.1: wide tables */
+.wiki-table-scroll{width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;margin:1em 0}
+.wiki-table-scroll .wikitable{width:max-content;min-width:100%;margin:0}
+.wiki-table-scroll .wikitable th,.wiki-table-scroll .wikitable td{min-width:max-content}
+
+/* v2.1: show/hide */
+.wiki-toggle-button,.wiki-toggle-row-button{border:1px solid #a2a9b1;background:#f8f9fa;border-radius:5px;padding:.25em .65em;color:#36c;cursor:pointer}
+.wiki-toggle-inline{display:inline}
+.wiki-toggle-inline .wiki-toggle-content:not([hidden]){display:inline}
+.wiki-toggle-block{display:block;border-left:3px solid #eaecf0;padding:.35em .6em;margin:.6em 0}
+.wiki-toggle-block .wiki-toggle-content:not([hidden]){display:block;margin-top:.5em}
+.wiki-toggle-row-control td{background:#f8f9fa!important;padding:.25em .5em!important}
+.wiki-toggle-row-target[hidden]{display:none!important}
+
+/* v2.1: vertical writing */
+:root{--vertical-default-height:min(72dvh,720px)}
+.wiki-vertical-scroll{max-width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;margin:1.2em 0;padding:.4em .2em}
+.wiki-vertical{writing-mode:vertical-rl;text-orientation:mixed;max-height:var(--vertical-height,var(--vertical-default-height));height:max-content;min-height:4em;width:max-content;line-height:1.9;letter-spacing:.04em;padding:.5em .8em}
+.kanbun-unit{position:relative;display:inline-block;min-height:1em;min-width:1em;margin:.08em .04em}
+.kanbun-base{font-size:1em}
+.kanbun-kaeri,.kanbun-okuri1,.kanbun-okuri2{position:absolute;font-size:.48em;line-height:1;writing-mode:horizontal-tb;white-space:nowrap}
+.kanbun-kaeri{left:-.72em;bottom:-.28em}
+.kanbun-okuri1{right:-.72em;bottom:-.28em}
+.kanbun-okuri2{left:-1.15em;top:50%;transform:translateY(-50%)}
+.kanbun-has-left-okuri{margin-left:.9em}
+.inline-error{display:inline-block;font-size:.8em}
+
+@media(max-width:700px){
+ :root{--vertical-default-height:min(62dvh,520px)}
+ .wiki-table-scroll{margin-left:-6px;margin-right:-6px;width:calc(100% + 12px)}
+ .wiki-table-scroll .wikitable{display:table;overflow:visible}
+ .wiki-vertical-scroll{margin-left:-6px;margin-right:-6px;max-width:calc(100% + 12px)}
+ .wiki-toggle-button,.wiki-toggle-row-button{min-height:36px}
+}

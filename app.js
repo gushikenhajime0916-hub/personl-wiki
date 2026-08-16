@@ -1,4 +1,4 @@
-const VERSION="2.0.8 Mobile";
+const VERSION="2.1";
 const state={articles:new Map(),logicalIndex:new Map(),meta:new Map(),current:null,refs:[],refGroups:new Map(),pageSearchMatches:[],pageSearchIndex:-1};
 let editorMode="edit";
 const $=id=>document.getElementById(id);
@@ -107,9 +107,29 @@ function addRef(name,body){
  }
  state.refs.push(body.trim());return {group:"",index:state.refs.length,label:String(state.refs.length)};
 }
+function renderKanbunUnit(kanji,kaeri="",okuri1="",okuri2=""){
+ const allowed=new Set(["","レ","一","二","三","一レ","上","中","下","上レ","甲","乙","丙","甲レ"]);
+ const k=String(kaeri||"").trim();
+ if(!allowed.has(k)){
+   return `<span class="syntax-error inline-error">漢文構文エラー：返り点「${esc(k)}」は未登録です。</span>`;
+ }
+ const c2=okuri2? " kanbun-has-left-okuri":"";
+ return `<span class="kanbun-unit${c2}"><span class="kanbun-base">${esc(kanji)}</span>${k?`<span class="kanbun-kaeri">${esc(k)}</span>`:""}${okuri1?`<span class="kanbun-okuri1">${esc(okuri1)}</span>`:""}${okuri2?`<span class="kanbun-okuri2">${esc(okuri2)}</span>`:""}</span>`;
+}
+function verticalInline(text,current){
+ text=text.replace(/\{\{([^|{}\s]+)\|([^|{}]*)(?:\|([^|{}]*))?(?:\|([^|{}]*))?\}\}/g,
+   (_,a,b,c,d)=>renderKanbunUnit(a,b,c||"",d||""));
+ return inline(text,current);
+}
+function toggleHtml(inner,current,block=false){
+ const id="toggle-"+Math.random().toString(36).slice(2,10);
+ const rendered=block?parse(inner,current,true,false):inline(inner,current);
+ return `<span class="wiki-toggle ${block?"wiki-toggle-block":"wiki-toggle-inline"}" data-toggle-id="${id}"><button type="button" class="wiki-toggle-button" aria-expanded="false">表示</button><span class="wiki-toggle-content" hidden>${rendered}</span></span>`;
+}
 function inline(text,current){
  const p=protectCode(text);text=p.text;
  text=text.replace(/<!--[\s\S]*?-->/g,"");
+ text=text.replace(/<toggle>([\s\S]*?)<\/toggle>/gi,(_,x)=>toggleHtml(x,current,false));
  text=text.replace(/<ref(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/ref>/gi,(_,name,body)=>{const r=addRef(name,body);return `<sup><a href="#" class="ref-popup-trigger" data-ref-group="${esc(r.group)}" data-ref-index="${r.index}">[${esc(r.label)}]</a></sup>`});
  text=text.replace(/<math>([\s\S]*?)<\/math>/gi,(_,x)=>renderMath(x,false));
  text=text.replace(/\{\{lang\|([^|}]+)\|([\s\S]*?)\}\}/gi,(_,c,b)=>`<span class="${LANG[String(c).toLowerCase()]||"lang-ja"}">${b}</span>`);
@@ -148,10 +168,20 @@ function breadcrumbs(title){const m=state.meta.get(title);if(!m||m.section!=="ma
 function parseTable(lines,title,start){
  let h="<table class='wikitable'>",i=start+1,rowOpen=false,cell=null;
  function closeCell(){if(cell){h+=parse(cell.text.join("\n"),title,true,true)+`</${cell.tag}>`;cell=null}}
+ function closeRow(){closeCell();if(rowOpen){h+="</tr>";rowOpen=false}}
  while(i<lines.length&&!/^\s*\|\}/.test(lines[i])){
    const x=lines[i];
    if(/^\s*\|\+/.test(x)){closeCell();h+=`<caption>${captionInline(x.replace(/^\s*\|\+\s*/,""),title)}</caption>`;i++;continue}
-   if(/^\s*\|-/.test(x)){closeCell();if(rowOpen)h+="</tr>";h+="<tr>";rowOpen=true;i++;continue}
+   if(/^\s*\|-/.test(x)){
+     closeRow();
+     const isToggle=/\btoggle\b/i.test(x);
+     const rowId="trow-"+Math.random().toString(36).slice(2,10);
+     if(isToggle){
+       h+=`<tr class="wiki-toggle-row-control"><td colspan="999"><button type="button" class="wiki-toggle-row-button" data-row-target="${rowId}" aria-expanded="false">表示</button></td></tr>`;
+       h+=`<tr id="${rowId}" class="wiki-toggle-row-target" hidden>`;
+     }else h+="<tr>";
+     rowOpen=true;i++;continue
+   }
    if(/^\s*!/.test(x)||/^\s*\|/.test(x)){
      closeCell();if(!rowOpen){h+="<tr>";rowOpen=true}
      const head=/^\s*!/.test(x),c=parseCell(x,head),tag=head?"th":"td";
@@ -160,7 +190,8 @@ function parseTable(lines,title,start){
    if(cell)cell.text.push(x);
    i++;
  }
- closeCell();if(rowOpen)h+="</tr>";h+="</table>";return{html:h,next:i+1};
+ closeRow();h+="</table>";
+ return{html:`<div class="wiki-table-scroll">${h}</div>`,next:i+1};
 }
 
 function parse(raw,title,isFrag=false,inCell=false){
@@ -170,6 +201,23 @@ function parse(raw,title,isFrag=false,inCell=false){
  while(i<lines.length){
    const l=lines[i];
    if(/^\s*<!--/.test(l)){while(i<lines.length&&!/-->/.test(lines[i]))i++;i++;continue}
+   if(/^\s*<toggle>\s*$/.test(l)){
+     const b=[];i++;
+     while(i<lines.length&&!/^\s*<\/toggle>\s*$/.test(lines[i])){b.push(lines[i]);i++}
+     if(i>=lines.length){out.push('<div class="syntax-error">Wiki構文エラー：&lt;toggle&gt; が閉じられていません。</div>');continue}
+     i++;out.push(toggleHtml(b.join("\n"),title,true));continue
+   }
+   const vm=l.match(/^\s*<vertical(?:\s+height=["']?(\d{2,4})["']?)?>\s*$/i);
+   if(vm){
+     const b=[];i++;
+     while(i<lines.length&&!/^\s*<\/vertical>\s*$/.test(lines[i])){b.push(lines[i]);i++}
+     if(i>=lines.length){out.push('<div class="syntax-error">Wiki構文エラー：&lt;vertical&gt; が閉じられていません。</div>');continue}
+     i++;
+     const requested=vm[1]?parseInt(vm[1]):null;
+     const lim=requested?`min(${requested}px, calc(100dvh - 120px))`:"var(--vertical-default-height)";
+     const inner=b.map(x=>verticalInline(x,title)).join("<br>");
+     out.push(`<div class="wiki-vertical-scroll"><div class="wiki-vertical" style="--vertical-height:${lim}">${inner}</div></div>`);continue
+   }
    if(!inCell&&/^\s*\{\|\s*class=["']?wikitable/.test(l)){const t=parseTable(lines,title,i);out.push(t.html);i=t.next;continue}
    if(inCell&&/^\s*\{\|/.test(l)){out.push('<div class="syntax-error">Wiki構文エラー：表の中に表を入れることはできません。</div>');i++;continue}
    if(inCell&&/^\s*<columns>/.test(l)){out.push('<div class="syntax-error">Wiki構文エラー：表のセル内では段組みを使用できません。</div>');i++;continue}
@@ -195,10 +243,28 @@ function parse(raw,title,isFrag=false,inCell=false){
 }
 
 function ensureRefPopup(){let p=$("refPopup");if(p)return p;p=document.createElement("div");p.id="refPopup";p.className="ref-popup";p.innerHTML='<button class="ref-popup-close">×</button><div class="ref-popup-title"></div><div class="ref-popup-body"></div>';document.body.appendChild(p);p.querySelector(".ref-popup-close").onclick=()=>p.classList.remove("open");return p}
-function openRefPopup(a,group,index){const p=ensureRefPopup();let body="",label="";if(group){const arr=state.refGroups.get(group)||[];body=arr[index-1]||"";label=`${group}${index}`}else{body=state.refs[index-1]||"";label=String(index)}p.querySelector(".ref-popup-title").textContent=`脚注 ${label}`;p.querySelector(".ref-popup-body").innerHTML=inline(body,state.current);p.classList.add("open");const q=a.getBoundingClientRect();p.style.left=`${Math.max(8,window.scrollX+q.left)}px`;p.style.top=`${window.scrollY+q.bottom+8}px`;bindWithin(p)}
+function openRefPopup(a,group,index){const p=ensureRefPopup();let body="",label="";if(group){const arr=state.refGroups.get(group)||[];body=arr[index-1]||"";label=`${group}${index}`}else{body=state.refs[index-1]||"";label=String(index)}p.querySelector(".ref-popup-title").textContent=`脚注 ${label}`;p.querySelector(".ref-popup-body").innerHTML=inline(body,state.current);p.classList.add("open");const q=a.getBoundingClientRect();p.style.left=`${Math.max(8,window.scrollX+q.left)}px`;p.style.top=`${window.scrollY+q.bottom+8}px`;bindWithin(p);bindToggles(p)}
 function closeRef(){const p=$("refPopup");if(p)p.classList.remove("open")}
 function bindWithin(root=document){root.querySelectorAll(".internal").forEach(a=>a.onclick=e=>{e.preventDefault();closeRef();if(a.classList.contains("redlink"))return;openArticle(a.dataset.target);if(a.dataset.heading)setTimeout(()=>document.getElementById(slug(a.dataset.heading))?.scrollIntoView({behavior:"smooth"}),50)});root.querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>showCategory(b.dataset.cat));root.querySelectorAll(".ref-popup-trigger").forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();openRefPopup(a,a.dataset.refGroup||"",parseInt(a.dataset.refIndex))})}
-function bind(){bindWithin(document)}
+function bindToggles(root=document){
+ root.querySelectorAll(".wiki-toggle-button").forEach(btn=>btn.onclick=()=>{
+   const box=btn.closest(".wiki-toggle"),content=box?.querySelector(".wiki-toggle-content");
+   if(!content)return;
+   const open=content.hidden;
+   content.hidden=!open;
+   btn.textContent=open?"非表示":"表示";
+   btn.setAttribute("aria-expanded",open?"true":"false");
+ });
+ root.querySelectorAll(".wiki-toggle-row-button").forEach(btn=>btn.onclick=()=>{
+   const row=document.getElementById(btn.dataset.rowTarget);
+   if(!row)return;
+   const open=row.hidden;
+   row.hidden=!open;
+   btn.textContent=open?"非表示":"表示";
+   btn.setAttribute("aria-expanded",open?"true":"false");
+ });
+}
+function bind(){bindWithin(document);bindToggles(document)}
 async function openArticle(t){closeRef();state.current=t;$("current").textContent=t;const expanded=expandTemplates(state.articles.get(t)||"");$("view").innerHTML=parse(expanded,t,false,false);bind();resetPageSearch();await WikiStorage.hydrateImages($("view"));updateEditAvailability();window.scrollTo(0,0)}
 function allCategories(){const s=new Set();for(const[,x]of state.articles)for(const c of cats(x))s.add(c);return [...s].sort((a,b)=>a.localeCompare(b,"ja"))}
 function sectionTitles(sec){return [...state.articles.keys()].filter(t=>(state.meta.get(t)?.section||"main")===sec).sort((a,b)=>a.localeCompare(b,"ja"))}
@@ -280,6 +346,17 @@ async function saveEdit(){
  }
 
  if(!state.current)return;
+ const original=state.articles.get(state.current)||"";
+ const decrease=original.length-text.length;
+ const ratio=original.length?decrease/original.length:0;
+ if(decrease>=100 && ratio>=0.10){
+   const pct=Math.round(ratio*100);
+   const ok=confirm(`元の記事から ${decrease} 文字（約${pct}%）減少しています。\n\n大幅な削除の可能性があります。この内容で保存しますか？`);
+   if(!ok){
+     $("editorMessage").textContent="保存をキャンセルしました。編集内容は残っています。";
+     return;
+   }
+ }
  const meta=state.meta.get(state.current);
  $("editorMessage").textContent="保存中…";
  try{
@@ -386,8 +463,8 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeRef();$("pageS
 $("editBtn").onclick=beginEdit;
 $("editorSave").onclick=saveEdit;
 $("editorCancel").onclick=cancelEdit;
-$("newArticleBtn").onclick=createArticleUi;
-$("newTemplateBtn").onclick=createTemplateUi;
+$("newArticleBtn").onclick=()=>{closeDrawer();createArticleUi()};
+$("newTemplateBtn").onclick=()=>{closeDrawer();createTemplateUi()};
 $("dropboxSettingsSave").onclick=saveDropboxSettings;
 $("dropboxConnectBtn").onclick=()=>WikiStorage.beginLogin().catch(e=>alert(e.message));
 $("dropboxDisconnectBtn").onclick=()=>{WikiStorage.disconnect();updateCloudStatus();alert("この端末のDropbox接続情報を削除しました。")};

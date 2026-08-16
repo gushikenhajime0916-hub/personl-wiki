@@ -1,5 +1,5 @@
 {
-  "name": "個人Wiki v2.0.8 Mobile",
+  "name": "個人Wiki v2.1 Mobile",
   "short_name": "個人Wiki",
   "start_url": "./",
   "scope": "./",
@@ -7,5 +7,5 @@
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
   "lang": "ja",
-  "description": "Dropboxと同期する個人用Wikiのスマートフォン/PWA版"
+  "description": "Dropboxと同期する個人用Wiki v2.1 スマートフォン/PWA版"
 }
