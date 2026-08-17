@@ -7,9 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="個人Wiki">
-<title>個人Wiki v2.1 Mobile</title>
-<link rel="manifest" href="manifest.webmanifest?v=mobile210">
-<link rel="stylesheet" href="style.css?v=mobile210">
+<title>個人Wiki v2.2 Mobile</title>
+<link rel="manifest" href="manifest.webmanifest?v=mobile220">
+<link rel="stylesheet" href="style.css?v=mobile220">
 <script>
 // v2.0初期版の古いService Workerをローカル起動時に解除する。
 if ('serviceWorker' in navigator && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
@@ -22,7 +22,7 @@ if ('serviceWorker' in navigator && (location.hostname === '127.0.0.1' || locati
 <header>
   <button id="menu" aria-label="メニュー">☰</button>
   <div class="brand">
-    <strong>個人Wiki v2.1 Mobile</strong>
+    <strong>個人Wiki v2.2 Mobile</strong>
     <small><span id="current"></span> <span id="cloudStatus" class="cloud-status"></span></small>
   </div>
   <button id="editBtn" title="編集" disabled>✎</button>
@@ -79,12 +79,12 @@ if ('serviceWorker' in navigator && (location.hostname === '127.0.0.1' || locati
   </section>
   <article id="view" class="paper"></article>
 </main>
-<script src="storage.js?v=mobile210"></script>
-<script src="app.js?v=mobile210"></script>
+<script src="storage.js?v=mobile220"></script>
+<script src="app.js?v=mobile220"></script>
 <script>
 // PWAのService WorkerはHTTPS公開時だけ登録する。ローカルPC版では登録しない。
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('./sw.js?v=mobile210').catch(console.warn);
+  navigator.serviceWorker.register('./sw.js?v=mobile220').catch(console.warn);
 }
 </script>
 </body></html>

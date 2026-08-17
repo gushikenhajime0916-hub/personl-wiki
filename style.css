@@ -121,3 +121,31 @@ button,input,select,textarea{touch-action:manipulation}
  .wiki-vertical-scroll{margin-left:-6px;margin-right:-6px;max-width:calc(100% + 12px)}
  .wiki-toggle-button,.wiki-toggle-row-button{min-height:36px}
 }
+
+
+/* v2.2 */
+.wiki-hr{border:0;border-top:1px solid #a2a9b1;margin:1.4em 0}
+.wiki-notice{display:block;border:1px solid #a2a9b1;border-left:5px solid #72777d;background:#f8f9fa;border-radius:4px;padding:.75em 1em;margin:1em 0}
+.wiki-notice>:first-child{margin-top:0}.wiki-notice>:last-child{margin-bottom:0}
+.wiki-pinyin{font-family:Arial,"Noto Sans",sans-serif}
+.wiki-numbered-list{margin:.6em 0}
+.wiki-numbered-item{display:flex;gap:.5em;margin:.25em 0;padding-left:calc((var(--list-depth) - 1) * 1.6em)}
+.wiki-number-label{flex:0 0 auto;min-width:3em;font-variant-numeric:tabular-nums}
+.wiki-number-text{min-width:0}
+
+/* v2.2 漢文：A=右下、B=左下、C=左、D=右。複数文字は縦組み */
+.kanbun-unit{position:relative;display:inline-block;min-height:1em;min-width:1em;margin:.16em .16em}
+.kanbun-base{font-size:1em}
+.kanbun-slot{position:absolute;font-size:.48em;line-height:1.05;writing-mode:vertical-rl;text-orientation:upright;white-space:nowrap;letter-spacing:0}
+.kanbun-a{right:-.82em;bottom:-.32em}
+.kanbun-b{left:-.82em;bottom:-.32em}
+.kanbun-c{left:-1.18em;top:50%;transform:translateY(-50%)}
+.kanbun-d{right:-1.18em;top:50%;transform:translateY(-50%)}
+.kanbun-has-c{margin-left:1em}
+.kanbun-has-d{margin-right:1em}
+.kanbun-has-a,.kanbun-has-b{margin-bottom:.45em}
+
+@media(max-width:700px){
+ .wiki-numbered-item{padding-left:calc((var(--list-depth) - 1) * 1.15em)}
+ .wiki-number-label{min-width:2.7em}
+}

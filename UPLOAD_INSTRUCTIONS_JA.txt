@@ -1,0 +1,17 @@
+GitHub Pages版 v2.2 差し替え手順
+================================
+
+GitHubリポジトリのルートで Add file → Upload files を開き、次の6ファイルをv2.2版で上書きしてください。
+
+・app.js
+・index.html
+・manifest.webmanifest
+・storage.js
+・style.css
+・sw.js
+
+.nojekyll は既にリポジトリに存在する場合、差し替え不要です。存在しない場合だけ追加してください。
+
+CHANGELOG_v2.2_JA.txt と 個人Wiki_v2.2追加記法.txt は説明資料なので、GitHub Pagesの動作だけならアップロード不要です。
+
+Commit後、GitHub Pagesの反映を待ち、既存のスマホ／Chromebookのホーム画面アイコンから「個人Wiki v2.2 Mobile」と表示されることを確認してください。

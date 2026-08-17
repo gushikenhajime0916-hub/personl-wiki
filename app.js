@@ -1,5 +1,5 @@
-const VERSION="2.1";
-const state={articles:new Map(),logicalIndex:new Map(),meta:new Map(),current:null,refs:[],refGroups:new Map(),pageSearchMatches:[],pageSearchIndex:-1};
+const VERSION="2.2";
+const state={articles:new Map(),logicalIndex:new Map(),meta:new Map(),current:null,refs:new Map(),refGroups:new Map(),pageSearchMatches:[],pageSearchIndex:-1};
 let editorMode="edit";
 const $=id=>document.getElementById(id);
 const norm=s=>String(s??"").trim().normalize("NFKC");
@@ -51,29 +51,40 @@ function splitTemplateArgs(inner){
  parts.push(cur);return parts
 }
 function expandTemplates(raw,depth=0){
- if(depth>6||!WikiTemplates?.size)return raw;
+ if(depth>8||!WikiTemplates?.size)return raw;
+ const reserved=new Set(["lang","pinyin","reflist","関連項目(自動生成)"]);
  let out="",i=0;
  while(i<raw.length){
-   const s=raw.indexOf("{{",i);
-   if(s<0){out+=raw.slice(i);break}
-   out+=raw.slice(i,s);
-   let d=1,j=s+2;
+   const st=raw.indexOf("{{",i);
+   if(st<0){out+=raw.slice(i);break}
+   // Triple braces are parameters inside template bodies, not template calls.
+   if(raw.slice(st,st+3)==="{{{"){out+=raw.slice(i,st+3);i=st+3;continue}
+   out+=raw.slice(i,st);
+   let d=1,j=st+2;
    while(j<raw.length&&d){
+     if(raw.slice(j,j+3)==="{{{"){j+=3;continue}
      if(raw.slice(j,j+2)==="{{"){d++;j+=2;continue}
      if(raw.slice(j,j+2)==="}}"){d--;j+=2;if(!d)break;continue}
      j++
    }
-   if(d){out+=raw.slice(s);break}
-   const whole=raw.slice(s,j),inner=whole.slice(2,-2),parts=splitTemplateArgs(inner);
+   if(d){out+=raw.slice(st);break}
+   const whole=raw.slice(st,j),inner=whole.slice(2,-2),parts=splitTemplateArgs(inner);
    const name=(parts.shift()||"").trim();
-   if(!WikiTemplates.has(name)){out+=whole;i=j;continue}
+   if(reserved.has(name.toLowerCase())||!WikiTemplates.has(name)){out+=whole;i=j;continue}
    const vars={};let pos=1;
-   for(const a of parts){const eq=a.indexOf("=");if(eq>0)vars[a.slice(0,eq).trim()]=a.slice(eq+1).trim();else vars[String(pos++)]=a.trim()}
-   let body=WikiTemplates.get(name);
-   body=body.replace(/\{\{([A-Za-z0-9_\-\u3040-\u30ff\u3400-\u9fff]+)\}\}/g,(m,k)=>Object.prototype.hasOwnProperty.call(vars,k)?vars[k]:m);
-   out+=expandTemplates(body,depth+1);i=j
+   for(const arg of parts){
+     const eq=arg.indexOf("=");
+     if(eq>0)vars[arg.slice(0,eq).trim()]=arg.slice(eq+1).trim();
+     else vars[String(pos++)]=arg.trim();
+   }
+   let body=WikiTemplates.get(name)||"";
+   body=body.replace(/\{\{\{\s*([^{}|]+?)(?:\|([\s\S]*?))?\s*\}\}\}/g,(_,key,def)=>{
+     key=String(key).trim();
+     return Object.prototype.hasOwnProperty.call(vars,key)?vars[key]:(def!==undefined?def:"");
+   });
+   out+=expandTemplates(body,depth+1);i=j;
  }
- return out
+ return out;
 }
 
 const LANG={"ja":"lang-ja","zh":"lang-zh","zh-cn":"lang-zh-cn","zh-tw":"lang-zh-tw","en":"lang-en","ipa":"lang-ipa"};
@@ -99,27 +110,85 @@ function captionInline(text,current){
 }
 function parseImage(inside,current){const parts=inside.split("|").map(x=>x.trim()).filter(Boolean),file=parts.shift();let thumb=false,width=null,cap="";for(const p of parts){if(p==="thumb")thumb=true;else if(/^\d+px$/.test(p))width=parseInt(p);else cap=p}const capHtml=captionInline(cap,current);if(thumb)return `<figure class="figure-center"><img data-wiki-image="${esc(file)}" alt="${esc(cap||file)}"><figcaption>${capHtml}</figcaption></figure>`;return `<figure class="figure-large"${width?` style="max-width:min(${width}px,100%)"`:""}><img data-wiki-image="${esc(file)}" alt="${esc(cap||file)}"><figcaption>${capHtml}</figcaption></figure>`}
 
-function addRef(name,body){
+function refKey(grp,name){return `${grp||""}\u0000${name||""}`}
+function addRef(name,body,grp=""){
+ grp=String(grp||"").trim();name=String(name||"").trim();
  if(name){
-   if(!state.refGroups.has(name))state.refGroups.set(name,[]);
-   const arr=state.refGroups.get(name);arr.push(body.trim());
-   return {group:name,index:arr.length,label:`${name}${arr.length}`};
+   const key=refKey(grp,name);
+   if(!state.refGroups.has(key))state.refGroups.set(key,[]);
+   const arr=state.refGroups.get(key);arr.push(body.trim());
+   return {grp,name,index:arr.length,label:`${name}${arr.length}`};
  }
- state.refs.push(body.trim());return {group:"",index:state.refs.length,label:String(state.refs.length)};
+ if(!state.refs.has(grp))state.refs.set(grp,[]);
+ const arr=state.refs.get(grp);arr.push(body.trim());
+ return {grp,name:"",index:arr.length,label:String(arr.length)};
 }
-function renderKanbunUnit(kanji,kaeri="",okuri1="",okuri2=""){
- const allowed=new Set(["","レ","一","二","三","一レ","上","中","下","上レ","甲","乙","丙","甲レ"]);
- const k=String(kaeri||"").trim();
- if(!allowed.has(k)){
-   return `<span class="syntax-error inline-error">漢文構文エラー：返り点「${esc(k)}」は未登録です。</span>`;
+function kanbunVerticalText(x){return esc(String(x||""))}
+function renderKanbunUnit(kanji,slots={}){
+ const A=String(slots.A||""),B=String(slots.B||""),C=String(slots.C||""),D=String(slots.D||"");
+ const cls=["kanbun-unit",A&&"kanbun-has-a",B&&"kanbun-has-b",C&&"kanbun-has-c",D&&"kanbun-has-d"].filter(Boolean).join(" ");
+ return `<span class="${cls}"><span class="kanbun-base">${esc(kanji)}</span>${A?`<span class="kanbun-slot kanbun-a">${kanbunVerticalText(A)}</span>`:""}${B?`<span class="kanbun-slot kanbun-b">${kanbunVerticalText(B)}</span>`:""}${C?`<span class="kanbun-slot kanbun-c">${kanbunVerticalText(C)}</span>`:""}${D?`<span class="kanbun-slot kanbun-d">${kanbunVerticalText(D)}</span>`:""}</span>`;
+}
+function parseKanbunTemplate(inner){
+ const parts=splitTemplateArgs(inner),kanji=(parts.shift()||"").trim();
+ if(!kanji)return null;
+ const lower=kanji.toLowerCase();
+ if(["lang","pinyin","reflist","関連項目(自動生成)"].includes(lower))return null;
+ const slots={A:"",B:"",C:"",D:""};let named=false,pos=[];
+ for(const p of parts){
+   const m=p.match(/^\s*([ABCDabcd])\s*=([\s\S]*)$/);
+   if(m){slots[m[1].toUpperCase()]=m[2].trim();named=true}else pos.push(p.trim());
  }
- const c2=okuri2? " kanbun-has-left-okuri":"";
- return `<span class="kanbun-unit${c2}"><span class="kanbun-base">${esc(kanji)}</span>${k?`<span class="kanbun-kaeri">${esc(k)}</span>`:""}${okuri1?`<span class="kanbun-okuri1">${esc(okuri1)}</span>`:""}${okuri2?`<span class="kanbun-okuri2">${esc(okuri2)}</span>`:""}</span>`;
+ if(!named&&pos.length){
+   // v2.1 legacy compatibility: {{漢字|返り点|右下送り|左送り}}
+   slots.B=pos[0]||"";slots.A=pos[1]||"";slots.C=pos[2]||"";
+ }
+ return renderKanbunUnit(kanji,slots);
 }
 function verticalInline(text,current){
- text=text.replace(/\{\{([^|{}\s]+)\|([^|{}]*)(?:\|([^|{}]*))?(?:\|([^|{}]*))?\}\}/g,
-   (_,a,b,c,d)=>renderKanbunUnit(a,b,c||"",d||""));
+ text=text.replace(/\{\{([^{}]+)\}\}/g,(whole,inner)=>parseKanbunTemplate(inner)??whole);
  return inline(text,current);
+}
+function pinyinToneVowel(ch,tone){
+ const lower={a:["ā","á","ǎ","à"],e:["ē","é","ě","è"],i:["ī","í","ǐ","ì"],o:["ō","ó","ǒ","ò"],u:["ū","ú","ǔ","ù"],ü:["ǖ","ǘ","ǚ","ǜ"]};
+ const l=ch.toLowerCase(),v=lower[l]?.[tone-1];if(!v)return ch;
+ return ch===ch.toUpperCase()?v.toUpperCase():v;
+}
+function convertPinyinSyllable(syl){
+ const m=syl.match(/^([A-Za-züÜvV]+)([0-5])$/u);
+ if(!m)return {error:`拼音変換エラー：音節「${syl}」に有効な声調番号がありません`};
+ let base=m[1].replace(/v/g,"ü").replace(/V/g,"Ü"),tone=Number(m[2]);
+ if(tone===0||tone===5)return {text:base};
+ const low=base.toLowerCase();let idx=-1;
+ if(low.includes("a"))idx=low.indexOf("a");
+ else if(low.includes("e"))idx=low.indexOf("e");
+ else if(low.includes("ou"))idx=low.indexOf("o");
+ else {for(let i=low.length-1;i>=0;i--)if("iouü".includes(low[i])){idx=i;break}}
+ if(idx<0)return {error:`拼音変換エラー：音節「${syl}」に声調を付ける母音がありません`};
+ return {text:base.slice(0,idx)+pinyinToneVowel(base[idx],tone)+base.slice(idx+1)};
+}
+function convertPinyinChunk(chunk){
+ let out="",last=0,found=false;const re=/[A-Za-züÜvV]+[0-5]/gu;let m;
+ while((m=re.exec(chunk))){
+   if(m.index!==last)return {error:`拼音変換エラー：「${chunk.slice(last,m.index)}」を解釈できません`};
+   const r=convertPinyinSyllable(m[0]);if(r.error)return r;out+=r.text;found=true;last=re.lastIndex;
+ }
+ if(!found||last!==chunk.length)return {error:`拼音変換エラー：音節「${chunk}」に声調番号がありません`};
+ return {text:out};
+}
+function convertPinyinArg(arg){
+ const pieces=String(arg).split(/([\s']+)/u);let out="";
+ for(const p of pieces){
+   if(!p)continue;
+   if(/^[\s']+$/u.test(p)){out+=p;continue}
+   const r=convertPinyinChunk(p);if(r.error)return r;out+=r.text;
+ }
+ return {text:out};
+}
+function renderPinyin(inner){
+ const args=splitTemplateArgs(inner).slice(1);if(!args.length)return `<span class="syntax-error inline-error">拼音変換エラー：音節がありません</span>`;
+ let out="";for(const a of args){const r=convertPinyinArg(a);if(r.error)return `<span class="syntax-error inline-error">${esc(r.error)}</span>`;out+=r.text}
+ return `<span class="wiki-pinyin">${esc(out)}</span>`;
 }
 function toggleHtml(inner,current,block=false){
  const id="toggle-"+Math.random().toString(36).slice(2,10);
@@ -130,7 +199,8 @@ function inline(text,current){
  const p=protectCode(text);text=p.text;
  text=text.replace(/<!--[\s\S]*?-->/g,"");
  text=text.replace(/<toggle>([\s\S]*?)<\/toggle>/gi,(_,x)=>toggleHtml(x,current,false));
- text=text.replace(/<ref(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/ref>/gi,(_,name,body)=>{const r=addRef(name,body);return `<sup><a href="#" class="ref-popup-trigger" data-ref-group="${esc(r.group)}" data-ref-index="${r.index}">[${esc(r.label)}]</a></sup>`});
+ text=text.replace(/<ref\b([^>]*)>([\s\S]*?)<\/ref>/gi,(_,attrs,body)=>{const nm=attrs.match(/\bname\s*=\s*["']([^"']+)["']/i),gm=attrs.match(/\bgrp\s*=\s*["']?([^\s"'>]+)["']?/i),r=addRef(nm?nm[1]:"",body,gm?gm[1]:"");return `<sup><a href="#" class="ref-popup-trigger" data-ref-grp="${esc(r.grp)}" data-ref-name="${esc(r.name)}" data-ref-index="${r.index}">[${esc(r.label)}]</a></sup>`});
+ text=text.replace(/\{\{pinyin\|([^{}]+)\}\}/gi,(_,x)=>renderPinyin(`pinyin|${x}`));
  text=text.replace(/<math>([\s\S]*?)<\/math>/gi,(_,x)=>renderMath(x,false));
  text=text.replace(/\{\{lang\|([^|}]+)\|([\s\S]*?)\}\}/gi,(_,c,b)=>`<span class="${LANG[String(c).toLowerCase()]||"lang-ja"}">${b}</span>`);
  text=text.replace(/<br\s*\/?>/gi,"<br>").replace(/<s>([\s\S]*?)<\/s>/gi,'<span class="wiki-strike">$1</span>').replace(/<sup>([\s\S]*?)<\/sup>/gi,'<span class="wiki-sup">$1</span>').replace(/<sub>([\s\S]*?)<\/sub>/gi,'<span class="wiki-sub">$1</span>');
@@ -141,8 +211,47 @@ function inline(text,current){
  return restoreCode(text,p.stash);
 }
 
-function parseCell(line,head){let body=line.replace(head?/^\s*!\s*/:/^\s*\|\s*/,""),attrs={},txt=body;const pipe=body.indexOf("|");if(pipe>=0){const a=body.slice(0,pipe).trim();if(/(?:align|colspan|rowspan|scope)\s*=/.test(a)){txt=body.slice(pipe+1).trim();for(const m of a.matchAll(/\b(align|colspan|rowspan|scope)\s*=\s*["']?([^"'\s]+)["']?/gi))attrs[m[1].toLowerCase()]=m[2]}}const hs=[];if(["left","center","right"].includes((attrs.align||"").toLowerCase()))hs.push(`class="cell-align-${attrs.align.toLowerCase()}"`);if(/^\d+$/.test(attrs.colspan||""))hs.push(`colspan="${parseInt(attrs.colspan)}"`);if(/^\d+$/.test(attrs.rowspan||""))hs.push(`rowspan="${parseInt(attrs.rowspan)}"`);if(["col","row"].includes((attrs.scope||"").toLowerCase()))hs.push(`scope="${attrs.scope.toLowerCase()}"`);return{attrs:hs.join(" "),txt}}
+function sanitizeCellStyle(raw){
+ const allowed=new Set(["background-color","color","text-align","border","border-top","border-bottom","border-left","border-right"]),out=[];
+ for(const d of String(raw||"").split(";")){
+   const k=d.slice(0,d.indexOf(":" )).trim().toLowerCase(),v=d.slice(d.indexOf(":")+1).trim();
+   if(!allowed.has(k)||!v||/[{}<>]|url\s*\(|expression\s*\(/i.test(v))continue;
+   if(k==="text-align"&&!/^(left|center|right)$/i.test(v))continue;
+   if(!/^[#(),.%\w\s-]+$/u.test(v))continue;
+   out.push(`${k}:${v}`);
+ }
+ return out.join(";");
+}
+function parseCell(line,head){
+ let body=line.replace(head?/^\s*!\s*/:/^\s*\|\s*/,""),attrs={},txt=body;const pipe=body.indexOf("|");
+ if(pipe>=0){
+   const a=body.slice(0,pipe).trim();
+   if(/(?:align|colspan|rowspan|scope|style)\s*=/.test(a)){
+     txt=body.slice(pipe+1).trim();
+     for(const m of a.matchAll(/\b(align|colspan|rowspan|scope)\s*=\s*["']?([^"'\s]+)["']?/gi))attrs[m[1].toLowerCase()]=m[2];
+     const sm=a.match(/\bstyle\s*=\s*["']([^"']*)["']/i);if(sm)attrs.style=sanitizeCellStyle(sm[1]);
+   }
+ }
+ const hs=[];
+ if(["left","center","right"].includes((attrs.align||"").toLowerCase()))hs.push(`class="cell-align-${attrs.align.toLowerCase()}"`);
+ if(/^\d+$/.test(attrs.colspan||""))hs.push(`colspan="${parseInt(attrs.colspan)}"`);
+ if(/^\d+$/.test(attrs.rowspan||""))hs.push(`rowspan="${parseInt(attrs.rowspan)}"`);
+ if(["col","row"].includes((attrs.scope||"").toLowerCase()))hs.push(`scope="${attrs.scope.toLowerCase()}"`);
+ if(attrs.style)hs.push(`style="${esc(attrs.style)}"`);
+ return{attrs:hs.join(" "),txt};
+}
+function renderNumberedList(lines,title){
+ const counters=[];let h='<div class="wiki-numbered-list">';
+ for(const raw of lines){
+   const m=raw.match(/^(#+)\s+(.*)$/);if(!m)continue;const depth=m[1].length;
+   while(counters.length<depth)counters.push(0);counters.length=depth;counters[depth-1]++;
+   const label=counters.join(".")+".";
+   h+=`<div class="wiki-numbered-item" style="--list-depth:${depth}"><span class="wiki-number-label">${label}</span><span class="wiki-number-text">${inline(m[2],title)}</span></div>`;
+ }
+ return h+"</div>";
+}
 function renderNestedList(lines,title){
+ if(lines.length&&lines.every(x=>/^#+\s+/.test(x)))return renderNumberedList(lines,title);
  let html="",stack=[];
  for(const raw of lines){
    const m=raw.match(/^(\*+|#+)\s+(.*)$/);if(!m)continue;
@@ -156,11 +265,11 @@ function renderNestedList(lines,title){
  return html;
 }
 
-function refsHtml(){
- let h="";
- if(state.refs.length)h+=`<section class="ref-group"><h3>脚注</h3><ol>${state.refs.map((x,i)=>`<li>[${i+1}] ${inline(x,state.current)}</li>`).join("")}</ol></section>`;
- for(const[name,arr]of state.refGroups)h+=`<section class="ref-group"><h3>${esc(name)}</h3><ol>${arr.map((x,i)=>`<li>[${esc(name)}${i+1}] ${inline(x,state.current)}</li>`).join("")}</ol></section>`;
- return h?`<section class="box"><h2>脚注</h2>${h}</section>`:"";
+function refsHtml(grp=""){
+ grp=String(grp||"");let h="";const unnamed=state.refs.get(grp)||[];
+ if(unnamed.length)h+=`<section class="ref-group"><h3>脚注</h3><ol>${unnamed.map((x,i)=>`<li>[${i+1}] ${inline(x,state.current)}</li>`).join("")}</ol></section>`;
+ for(const[key,arr]of state.refGroups){const [g,name]=key.split("\u0000");if(g!==grp)continue;h+=`<section class="ref-group"><h3>${esc(name)}</h3><ol>${arr.map((x,i)=>`<li>[${esc(name)}${i+1}] ${inline(x,state.current)}</li>`).join("")}</ol></section>`}
+ return h?`<section class="box"><h2>脚注${grp?`（${esc(grp)}）`:""}</h2>${h}</section>`:"";
 }
 function autoHtml(t){const a=related(t);return `<details class="auto"><summary>関連項目（自動生成）</summary>${a.length?`<ul>${a.map(x=>`<li><a href="#" class="internal" data-target="${esc(x)}">${esc(x)}</a></li>`).join("")}</ul>`:"<p>関連項目はありません。</p>"}</details>`}
 function breadcrumbs(title){const m=state.meta.get(title);if(!m||m.section!=="main"||!m.pathParts?.length)return "";const items=[];for(let i=0;i<m.pathParts.length;i++){const logical=m.pathParts.slice(0,i+1).join("/"),r=resolve(logical);items.push(r?`<a href="#" class="internal" data-target="${esc(r)}">${esc(m.pathParts[i])}</a>`:`<span>${esc(m.pathParts[i])}</span>`)}return `<nav class="breadcrumbs">${items.join('<span class="sep">›</span>')}</nav>`}
@@ -195,12 +304,18 @@ function parseTable(lines,title,start){
 }
 
 function parse(raw,title,isFrag=false,inCell=false){
- if(!isFrag){state.refs=[];state.refGroups=new Map()}
- let cs=[],heads=[],out=[],i=0,lines=raw.replace(/\r\n?/g,"\n").split("\n");
+ if(!isFrag){state.refs=new Map();state.refGroups=new Map()}
+ let cs=[],heads=[],out=[],refPlaceholders=[],i=0,lines=raw.replace(/\r\n?/g,"\n").split("\n");
  if(!isFrag)lines=lines.filter(l=>{const m=l.match(/^\s*\[\[カテゴリ:([^\]]+)\]\]\s*$/);if(m){cs.push(norm(m[1]));return false}return true});
  while(i<lines.length){
    const l=lines[i];
    if(/^\s*<!--/.test(l)){while(i<lines.length&&!/-->/.test(lines[i]))i++;i++;continue}
+   if(/^\s*-{4,}\s*$/.test(l)){out.push('<hr class="wiki-hr">');i++;continue}
+   if(/^\s*<notice>\s*$/i.test(l)){
+     const b=[];i++;while(i<lines.length&&!/^\s*<\/notice>\s*$/i.test(lines[i])){b.push(lines[i]);i++}
+     if(i>=lines.length){out.push('<div class="syntax-error">Wiki構文エラー：&lt;notice&gt; が閉じられていません。</div>');continue}
+     i++;out.push(`<aside class="wiki-notice">${parse(b.join("\n"),title,true,false)}</aside>`);continue
+   }
    if(/^\s*<toggle>\s*$/.test(l)){
      const b=[];i++;
      while(i<lines.length&&!/^\s*<\/toggle>\s*$/.test(lines[i])){b.push(lines[i]);i++}
@@ -226,15 +341,15 @@ function parse(raw,title,isFrag=false,inCell=false){
    if(/^\s*<pre>/.test(l)){let b=[l.replace(/^\s*<pre>/,"")];i++;while(i<lines.length&&!/<\/pre>\s*$/.test(lines[i])){b.push(lines[i]);i++}if(i<lines.length)b.push(lines[i].replace(/<\/pre>\s*$/,""));out.push(`<pre class="wiki-code-block"><code>${esc(b.join("\n"))}</code></pre>`);i++;continue}
    if(/^\s*<blockquote>/.test(l)){let b=[l.replace(/^\s*<blockquote>/,"")];i++;while(i<lines.length&&!/<\/blockquote>\s*$/.test(lines[i])){b.push(lines[i]);i++}if(i<lines.length)b.push(lines[i].replace(/<\/blockquote>\s*$/,""));out.push(`<blockquote class="wiki-quote">${inline(b.join("<br>"),title)}</blockquote>`);i++;continue}
    if(/^\s*\{\{関連項目\(自動生成\)\}\}\s*$/.test(l)){out.push("__AUTO__");i++;continue}
-   if(/^\s*\{\{Reflist\}\}\s*$/.test(l)){out.push("__REFS__");i++;continue}
+   const rm=l.match(/^\s*\{\{Reflist(?:\|grp=([^}|]+))?\}\}\s*$/i);if(rm){const token=`__REFS_${refPlaceholders.length}__`;refPlaceholders.push({token,grp:(rm[1]||"").trim()});out.push(token);i++;continue}
    if(/^\s*;/.test(l)){let h="<dl>";while(i<lines.length&&(/^\s*;/.test(lines[i])||/^\s*:/.test(lines[i]))){h+=/^\s*;/.test(lines[i])?`<dt>${inline(lines[i].replace(/^\s*;\s*/,""),title)}</dt>`:`<dd>${inline(lines[i].replace(/^\s*:\s*/,""),title)}</dd>`;i++}out.push(h+"</dl>");continue}
    if(/^\s*(\*+|#+)\s+/.test(l)){const b=[];while(i<lines.length&&/^\s*(\*+|#+)\s+/.test(lines[i])){b.push(lines[i].trimStart());i++}out.push(renderNestedList(b,title));continue}
    const m=l.match(/^(={1,6})\s*(.*?)\s*\1\s*$/);
    if(m){const lvl=Math.min(6,m[1].length+1),txt=m[2].trim(),id=slug(txt);if(!inCell)heads.push({n:m[1].length,txt,id});out.push(`<h${lvl} id="${id}">${inline(txt,title)}</h${lvl}>`);i++;continue}
    if(!l.trim()){out.push("");i++;continue}
-   const para=[l];i++;while(i<lines.length&&lines[i].trim()&&!/^(={1,6})/.test(lines[i])&&!/^\s*(\*+|#+)\s+/.test(lines[i])&&!/^\s*[;:]/.test(lines[i])&&!/^\s*\{\|/.test(lines[i])&&!/^\s*\{\{/.test(lines[i])&&!/^\s*<pre>/.test(lines[i])&&!/^\s*<blockquote>/.test(lines[i])&&!/^\s*<columns>/.test(lines[i])){para.push(lines[i]);i++}out.push(`<p>${inline(para.join(" "),title)}</p>`);
+   const para=[l];i++;while(i<lines.length&&lines[i].trim()&&!/^(={1,6})/.test(lines[i])&&!/^\s*(\*+|#+)\s+/.test(lines[i])&&!/^\s*[;:]/.test(lines[i])&&!/^\s*\{\|/.test(lines[i])&&!/^\s*\{\{/.test(lines[i])&&!/^\s*<pre>/.test(lines[i])&&!/^\s*<blockquote>/.test(lines[i])&&!/^\s*<columns>/.test(lines[i])&&!/^\s*<notice>/.test(lines[i])&&!/^\s*<vertical/.test(lines[i])&&!/^\s*-{4,}\s*$/.test(lines[i])){para.push(lines[i]);i++}out.push(`<p>${inline(para.join(" "),title)}</p>`);
  }
- let body=out.join("\n").replace("__AUTO__",autoHtml(title)).replace("__REFS__",refsHtml());
+ let body=out.join("\n").replace("__AUTO__",autoHtml(title));for(const r of refPlaceholders)body=body.replace(r.token,refsHtml(r.grp));
  if(!isFrag&&heads.length)body=`<details class="toc"><summary>目次</summary><ul>${heads.map(h=>`<li style="margin-left:${(h.n-1)*14}px"><a href="#${h.id}">${esc(h.txt)}</a></li>`).join("")}</ul></details>`+body;
  if(isFrag)return body;
  const bl=backlinks(title);if(bl.length)body+=`<section class="box"><h2>このページへのリンク</h2><ul>${bl.map(x=>`<li><a href="#" class="internal" data-target="${esc(x)}">${esc(x)}</a></li>`).join("")}</ul></section>`;
@@ -243,9 +358,9 @@ function parse(raw,title,isFrag=false,inCell=false){
 }
 
 function ensureRefPopup(){let p=$("refPopup");if(p)return p;p=document.createElement("div");p.id="refPopup";p.className="ref-popup";p.innerHTML='<button class="ref-popup-close">×</button><div class="ref-popup-title"></div><div class="ref-popup-body"></div>';document.body.appendChild(p);p.querySelector(".ref-popup-close").onclick=()=>p.classList.remove("open");return p}
-function openRefPopup(a,group,index){const p=ensureRefPopup();let body="",label="";if(group){const arr=state.refGroups.get(group)||[];body=arr[index-1]||"";label=`${group}${index}`}else{body=state.refs[index-1]||"";label=String(index)}p.querySelector(".ref-popup-title").textContent=`脚注 ${label}`;p.querySelector(".ref-popup-body").innerHTML=inline(body,state.current);p.classList.add("open");const q=a.getBoundingClientRect();p.style.left=`${Math.max(8,window.scrollX+q.left)}px`;p.style.top=`${window.scrollY+q.bottom+8}px`;bindWithin(p);bindToggles(p)}
+function openRefPopup(a,grp,name,index){const p=ensureRefPopup();let body="",label="";grp=grp||"";name=name||"";if(name){const arr=state.refGroups.get(refKey(grp,name))||[];body=arr[index-1]||"";label=`${name}${index}`}else{const arr=state.refs.get(grp)||[];body=arr[index-1]||"";label=String(index)}p.querySelector(".ref-popup-title").textContent=`脚注 ${label}${grp?`（grp=${grp}）`:""}`;p.querySelector(".ref-popup-body").innerHTML=inline(body,state.current);p.classList.add("open");const q=a.getBoundingClientRect();p.style.left=`${Math.max(8,window.scrollX+q.left)}px`;p.style.top=`${window.scrollY+q.bottom+8}px`;bindWithin(p);bindToggles(p)}
 function closeRef(){const p=$("refPopup");if(p)p.classList.remove("open")}
-function bindWithin(root=document){root.querySelectorAll(".internal").forEach(a=>a.onclick=e=>{e.preventDefault();closeRef();if(a.classList.contains("redlink"))return;openArticle(a.dataset.target);if(a.dataset.heading)setTimeout(()=>document.getElementById(slug(a.dataset.heading))?.scrollIntoView({behavior:"smooth"}),50)});root.querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>showCategory(b.dataset.cat));root.querySelectorAll(".ref-popup-trigger").forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();openRefPopup(a,a.dataset.refGroup||"",parseInt(a.dataset.refIndex))})}
+function bindWithin(root=document){root.querySelectorAll(".internal").forEach(a=>a.onclick=e=>{e.preventDefault();closeRef();if(a.classList.contains("redlink"))return;openArticle(a.dataset.target);if(a.dataset.heading)setTimeout(()=>document.getElementById(slug(a.dataset.heading))?.scrollIntoView({behavior:"smooth"}),50)});root.querySelectorAll("[data-cat]").forEach(b=>b.onclick=()=>showCategory(b.dataset.cat));root.querySelectorAll(".ref-popup-trigger").forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();openRefPopup(a,a.dataset.refGrp||"",a.dataset.refName||"",parseInt(a.dataset.refIndex))})}
 function bindToggles(root=document){
  root.querySelectorAll(".wiki-toggle-button").forEach(btn=>btn.onclick=()=>{
    const box=btn.closest(".wiki-toggle"),content=box?.querySelector(".wiki-toggle-content");
